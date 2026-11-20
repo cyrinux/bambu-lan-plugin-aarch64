@@ -1,0 +1,42 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Native aarch64 runner; the plugins are built in the same freedesktop SDK
+    # Bambu Studio's flatpak runtime is based on (org.gnome.Platform 51 -> fdo 26.08).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install flatpak and the freedesktop SDK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak openssl python3
+          # bubblewrap needs unprivileged user namespaces (restricted by AppArmor on 24.04)
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.freedesktop.Sdk//26.08
+
+      - name: Build, unit tests, package
+        run: scripts/package.sh "${GITHUB_REF_NAME}"
+
+      - name: Integration tests (fake printer)
+        run: BBL_TEST_APP=org.freedesktop.Sdk//26.08 tests/integration.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bambu-lan-plugin-aarch64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
