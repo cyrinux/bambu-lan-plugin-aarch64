@@ -25,7 +25,7 @@ selected in its preferences (step 5b). So:
 
 ```sh
 flatpak install flathub com.bambulab.BambuStudio org.freedesktop.Sdk//26.08
-git clone https://github.com/cyrinux/bambulab-a1-aarch64 && cd bambulab-a1-aarch64
+git clone https://github.com/cyrinux/bambu-lan-plugin-aarch64 && cd bambu-lan-plugin-aarch64
 ```
 
 For step 3 you also need a local Bambu Studio checkout of both tags:

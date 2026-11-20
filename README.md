@@ -1,6 +1,9 @@
-# bambulab-a1-aarch64: Bambu Studio & OrcaSlicer LAN plugin for arm64 Linux
+# bambu-lan-plugin-aarch64: LAN network plugin for Bambu Studio & OrcaSlicer on arm64 Linux
 
-[![build](https://github.com/cyrinux/bambulab-a1-aarch64/actions/workflows/build.yml/badge.svg)](https://github.com/cyrinux/bambulab-a1-aarch64/actions/workflows/build.yml)
+[![build](https://github.com/cyrinux/bambu-lan-plugin-aarch64/actions/workflows/build.yml/badge.svg)](https://github.com/cyrinux/bambu-lan-plugin-aarch64/actions/workflows/build.yml)
+
+> **Unofficial community project.** Not affiliated with, endorsed by or
+> supported by Bambu Lab. Use at your own risk; see [Legal notice](#legal-notice).
 
 Bambu Studio and OrcaSlicer talk to Bambu printers through two closed-source
 plugins that Bambu only ships for x86-64 (`libbambu_networking.so`,
@@ -62,7 +65,7 @@ enabled on recent firmware, because this plugin cannot sign commands.
 ## Install from a release
 
 Download `bambu-lan-plugin-*-aarch64.tar.gz` from the
-[releases](https://github.com/cyrinux/bambulab-a1-aarch64/releases), close Bambu Studio, then:
+[releases](https://github.com/cyrinux/bambu-lan-plugin-aarch64/releases), close Bambu Studio, then:
 
 ```sh
 tar xzf bambu-lan-plugin-*-aarch64.tar.gz && cd bambu-lan-plugin-*-aarch64
@@ -187,4 +190,31 @@ docs/             how it works, Studio/Orca ↔ plugin contracts, updating guide
 
 ## License
 
-AGPL-3.0, like the Bambu Studio headers it builds against.
+AGPL-3.0, like the Bambu Studio and OrcaSlicer headers it builds against
+(`third_party/bambu/`, `third_party/orca/`, copied from those AGPL-3.0
+projects with their origin recorded in `UPSTREAM`).
+
+## Legal notice
+
+- This is an independent, unofficial project. It is **not affiliated with,
+  endorsed by or supported by Bambu Lab** (Shenzhen Tuozhu Technology Co., Ltd.),
+  OrcaSlicer or their authors. "Bambu Lab", "Bambu Studio", "A1", "P1", "X1" and
+  related names are trademarks of their respective owners, used here only to
+  describe compatibility. No logos or other branding are used.
+- Its sole purpose is **interoperability**: letting the open-source Bambu Studio
+  and OrcaSlicer applications use printers you own, over your own local
+  network, on a CPU architecture for which no official plugin exists.
+- It contains **no code, binaries, keys or certificates from Bambu Lab's
+  closed-source software**, and was not made by decompiling or disassembling it.
+  It was written from the slicers' open-source (AGPL-3.0) code, which declares the
+  plugin interface, and from publicly documented printer protocols.
+- It does **not** circumvent any access control: it uses the access code the
+  owner reads from the printer's own screen, does not sign commands, does not
+  bypass firmware authorization, and does not talk to Bambu Lab's cloud
+  services. Contributions adding extracted keys, signing or cloud
+  authentication bypasses will be refused.
+- Provided "as is", without warranty of any kind (see LICENSE). Using third-party
+  software with your printer may affect its warranty or support; that is your
+  decision.
+- Rights holders with concerns can open an issue or contact the maintainer
+  through GitHub; concerns will be addressed promptly.
