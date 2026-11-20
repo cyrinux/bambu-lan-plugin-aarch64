@@ -224,7 +224,12 @@ int main(int argc, char** argv)
     }
     const std::string dir = argv[1];
     const std::string cmd = argv[2];
-    g_net = dlopen((dir + "/libbambu_networking.so").c_str(), RTLD_LAZY);
+#ifdef BBL_TARGET_ORCA
+    const char* net_lib = "/libbambu_networking_orca.so";
+#else
+    const char* net_lib = "/libbambu_networking.so";
+#endif
+    g_net = dlopen((dir + net_lib).c_str(), RTLD_LAZY);
     g_src = dlopen((dir + "/libBambuSource.so").c_str(), RTLD_LAZY);
     if (g_net == nullptr || g_src == nullptr) {
         std::fprintf(stderr, "dlopen failed: %s\n", dlerror());

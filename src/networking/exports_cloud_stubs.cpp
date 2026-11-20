@@ -28,7 +28,6 @@ BBL_EXPORT std::string bambu_network_get_user_id(void*) { return {}; }
 BBL_EXPORT std::string bambu_network_get_user_name(void*) { return {}; }
 BBL_EXPORT std::string bambu_network_get_user_avatar(void*) { return {}; }
 BBL_EXPORT std::string bambu_network_get_user_nickanme(void*) { return {}; }
-BBL_EXPORT int         bambu_network_report_consent(void*, std::string) { return 0; }
 BBL_EXPORT std::string bambu_network_get_bambulab_host(void*) { return "https://bambulab.com"; }
 BBL_EXPORT std::string bambu_network_get_user_selected_machine(void*) { return {}; }
 BBL_EXPORT int         bambu_network_set_user_selected_machine(void*, std::string) { return 0; }
@@ -43,6 +42,9 @@ BBL_EXPORT int bambu_network_get_my_profile(void*, std::string, unsigned int* ht
         http_body->clear();
     return BAMBU_NETWORK_ERR_CONNECTION_TO_SERVER_FAILED;
 }
+
+#ifndef BBL_TARGET_ORCA  // Bambu Studio only; absent from Orca's ABI
+BBL_EXPORT int bambu_network_report_consent(void*, std::string) { return 0; }
 
 BBL_EXPORT int bambu_network_post_device_region(void*, DeviceRegionParams, std::string* http_body)
 {
@@ -66,6 +68,7 @@ BBL_EXPORT int bambu_network_get_minors_decisions(void*, const std::vector<std::
     }
     return 0;
 }
+#endif // BBL_TARGET_ORCA
 
 // Telemetry: accepted and dropped.
 BBL_EXPORT int bambu_network_track_enable(void*, bool) { return 0; }
@@ -97,15 +100,19 @@ BBL_CHECK(get_user_id)
 BBL_CHECK(get_user_name)
 BBL_CHECK(get_user_avatar)
 BBL_CHECK(get_user_nickanme)
-BBL_CHECK(report_consent)
 BBL_CHECK(get_bambulab_host)
 BBL_CHECK(get_user_selected_machine)
 BBL_CHECK(set_user_selected_machine)
+#ifndef BBL_TARGET_ORCA  // added after Orca 2.4
 BBL_CHECK(get_studio_info_url)
+#endif
 BBL_CHECK(set_extra_http_header)
 BBL_CHECK(get_my_profile)
+#ifndef BBL_TARGET_ORCA
+BBL_CHECK(report_consent)
 BBL_CHECK(post_device_region)
 BBL_CHECK(get_minors_decisions)
+#endif
 BBL_CHECK(track_enable)
 BBL_CHECK(track_remove_files)
 BBL_CHECK(track_event)

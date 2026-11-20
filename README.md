@@ -1,19 +1,24 @@
-# bambulab-a1-aarch64: Bambu Studio LAN plugin for arm64 Linux
+# bambulab-a1-aarch64: Bambu Studio & OrcaSlicer LAN plugin for arm64 Linux
 
 [![build](https://github.com/cyrinux/bambulab-a1-aarch64/actions/workflows/build.yml/badge.svg)](https://github.com/cyrinux/bambulab-a1-aarch64/actions/workflows/build.yml)
 
-Bambu Studio talks to printers through two closed-source plugins that Bambu only
-ships for x86-64 (`libbambu_networking.so`, `libBambuSource.so`). On an aarch64
-machine the slicer cannot load them, so the Device tab, sending prints and the
-camera don't work.
+Bambu Studio and OrcaSlicer talk to Bambu printers through two closed-source
+plugins that Bambu only ships for x86-64 (`libbambu_networking.so`,
+`libBambuSource.so`). On an aarch64 machine the slicer cannot load them, so the
+Device tab, sending prints and the camera don't work.
 
 This project is an open-source, native aarch64 reimplementation of the **LAN**
-part of those plugins, written against the plugin ABI published in Bambu
-Studio's source (`src/slic3r/Utils/NetworkAgent.hpp`, `bambu_networking.hpp`,
-`GUI/Printer/BambuTunnel.h`, pinned to **v02.09.01.70**). How it was done:
-[docs/how-it-works.md](docs/how-it-works.md).
+part of those plugins, written against the plugin ABI published in the slicers'
+own source. How it was done: [docs/how-it-works.md](docs/how-it-works.md).
+Updating for a new slicer release: [docs/updating.md](docs/updating.md).
 
-Tested: Bambu Studio 2.9.1 flatpak on aarch64 with a **Bambu Lab A1**.
+| Slicer | Built against | Plugin file | Tested |
+|---|---|---|---|
+| Bambu Studio 2.9.x (flatpak or native) | `bambulab/BambuStudio` v02.09.01.70 | `libbambu_networking.so` | 2.9.1 flatpak with a **Bambu Lab A1** |
+| OrcaSlicer 2.4.x (native, e.g. nixpkgs, or flatpak) | `OrcaSlicer/OrcaSlicer` v2.4.2 (Bambu plugin series 02.03.00) | `libbambu_networking_02.03.00.62-lan.so` | plugin ABI and protocol tests in a host (Nix) OrcaSlicer environment |
+
+Both share the same `libBambuSource.so` (camera). Native builds need glibc ≥ 2.38,
+libstdc++ from GCC ≥ 13, OpenSSL 3 and libcurl 4 (any 2024+ distribution).
 
 ## Printer compatibility
 
@@ -61,48 +66,81 @@ Download `bambu-lan-plugin-*-aarch64.tar.gz` from the
 
 ```sh
 tar xzf bambu-lan-plugin-*-aarch64.tar.gz && cd bambu-lan-plugin-*-aarch64
-./install.sh               # flatpak Studio (~/.var/app/com.bambulab.BambuStudio/...)
-./install.sh --native      # non-flatpak Studio (~/.config/BambuStudio)
-./install.sh --uninstall   # restore Bambu's original files
+./install.sh                  # Bambu Studio flatpak (~/.var/app/com.bambulab.BambuStudio/...)
+./install.sh --native         # Bambu Studio, non-flatpak (~/.config/BambuStudio)
+./install.sh --orca           # OrcaSlicer, non-flatpak (~/.config/OrcaSlicer)
+./install.sh --orca-flatpak   # OrcaSlicer flatpak
+./install.sh --orca --uninstall   # restore the original files (any target)
 ```
 
 In Studio, **don't click "Install Network Plug-in"**: that downloads Bambu's
 x86-64 build again.
 
+### OrcaSlicer
+
+OrcaSlicer loads `plugins/libbambu_networking_<version>.so`, `<version>` being
+`app.network_plugin_version` in `OrcaSlicer.conf`. After loading a plugin it
+saves the plugin's own `get_version()` there. `install.sh --orca` therefore
+installs the same library twice:
+
+- `libbambu_networking_02.03.00.99.so`: what Orca loads (`02.03.00.99` is our version).
+- `libbambu_networking_02.03.00.62-lan.so`: listed in Preferences → Network
+  plug-in version as `02.03.00.62-lan`.
+
+It then sets `network_plugin_version = 02.03.00.99` and `installed_networking = true`.
+The previous values are restored by `--uninstall`; `--no-config` leaves the config alone.
+
+- Restart Orca after installing. **Don't pick another plug-in version or click
+  "download"/"update"**: Orca would fetch Bambu's x86-64 build over ours.
+- The Bambu plugin is only used while a Bambu printer preset is selected.
+- Live camera: Orca plays it through GStreamer and refuses to start unless
+  `h264parse` and an H.264 decoder are installed (even though this camera is
+  MJPEG), plus `jpegdec` (gst-plugins-bad/-good, libav).
+- Contract details: [docs/orca-contract.md](docs/orca-contract.md).
+
 ## Build from source
 
 Built inside the freedesktop 26.08 SDK, the base of Studio's GNOME 51 runtime, so
-glibc/libstdc++/OpenSSL/libcurl match exactly:
+glibc/libstdc++/OpenSSL/libcurl match the Studio flatpak exactly (and are old
+enough for any current distribution):
 
 ```sh
 flatpak install flathub org.freedesktop.Sdk//26.08   # once
-scripts/build.sh                                      # → dist/*.so, runs unit tests
-tests/integration.sh                                  # fake printer, run in Studio's runtime
-scripts/package.sh v0.1.0                             # → dist/bambu-lan-plugin-*.tar.gz
+scripts/build.sh                                      # → dist/*.so (Studio + Orca), runs unit tests
+tests/integration.sh                                  # fake printer, Studio plugin, in Studio's runtime
+BBL_TEST_TARGET=orca tests/integration.sh             # same for the Orca plugin
+BBL_TEST_TARGET=orca BBL_TEST_RUNNER=native tests/integration.sh   # loaded by a host-built process
+scripts/package.sh v0.1.0                             # → dist/bambu-lan-plugin-v0.1.0-aarch64.tar.gz
 ```
+
+On NixOS, run the native test under `nix-shell -p gcc pkg-config openssl curl --run ...`.
 
 Install from the source tree with `scripts/install.sh` (same options).
 
 ## Usage
 
 The original x86-64 files are kept in `plugins/x86_64-original/`. The plugin
-reports version `02.09.01.99` so Studio accepts it (prefix `02.09.01`) and does
-not offer to "update" it back to Bambu's x86-64 build.
+reports version `02.09.01.99` (Studio) / `02.03.00.99` (Orca), so the slicer
+accepts it (same first 8 characters) and does not offer to "update" it back to
+Bambu's x86-64 build.
 
-Then in Studio: Device tab → add the printer (it appears by itself if the
+Then in the slicer: Device tab → add the printer (it appears by itself if the
 broadcasts reach this machine, otherwise use "connect via IP") → enter the
 access code from the printer screen.
 
-Plugin log: `bambu_lan_plugin.log` in the log directory Studio passes to the
-plugin (Studio's `log/` folder). `BBL_LAN_DEBUG=1` also logs to stderr,
+Plugin log: `bambu_lan_plugin.log` in the log directory the slicer passes to the
+plugin (its `log/` folder). `BBL_LAN_DEBUG=1` also logs to stderr,
 including MQTT traffic.
 
 ## Troubleshooting
 
-- **Device tab says the network plugin is missing / needs an update after a Studio upgrade**:
-  the new Studio version has a different `02.xx.yy` prefix, or its OTA updater copied
-  Bambu's x86-64 build from `ota/plugins/` over ours. Rebuild against the matching tag
-  (update `third_party/bambu/*` and `BBL_LAN_PLUGIN_VERSION`), then re-run `scripts/install.sh`.
+- **Device tab says the network plugin is missing / needs an update after a slicer upgrade**:
+  the new version expects a different plugin version, or its OTA updater copied
+  Bambu's x86-64 build over ours. Follow [docs/updating.md](docs/updating.md), then
+  re-run `install.sh`.
+- **OrcaSlicer asks to download the network plug-in**: `network_plugin_version` points
+  to a file that isn't ours (for example after picking another version in Preferences).
+  Close Orca and re-run `install.sh --orca`.
 - **"Incorrect password"**: the access code changed on the printer, or LAN-only mode is off.
 - **Connects, but commands are ignored**: enable Developer Mode on the printer (unsigned control).
 - **Printer not discovered**: SSDP broadcasts don't cross VLANs/VPNs; add it by IP.
@@ -123,23 +161,28 @@ Run them inside Studio's runtime to test the exact environment:
 
 ## Releasing
 
-Release tarballs are built and tested locally, then uploaded as-is, so their
-hash is stable for packagers (e.g. a Nix `fetchurl`). CI builds and tests every push.
+CI (`.github/workflows/build.yml`, native arm64 runner) builds, tests and
+uploads the tarball for every push and PR. Pushing a `v*` tag also publishes
+it as a GitHub release:
 
 ```sh
-git tag v0.1.0 && scripts/package.sh v0.1.0 && tests/integration.sh
-gh release create v0.1.0 dist/bambu-lan-plugin-v0.1.0-*.tar.gz* --notes-file docs/release-notes.md
+git tag -a v0.2.0 -m v0.2.0 && git push --follow-tags
 ```
+
+If a release with that tag already exists (e.g. uploaded by hand), CI only adds
+missing assets and never replaces them, so a published hash stays valid for
+packagers (e.g. a Nix `fetchurl`).
 
 ## Layout
 
 ```
 src/common/       logger, OpenSSL TLS socket
-src/networking/   libbambu_networking.so: agent, MQTT, SSDP, FTPS, print jobs, C exports
+src/networking/   libbambu_networking*.so: agent, MQTT, SSDP, FTPS, print jobs, C exports
 src/source/       libBambuSource.so: bambu:///local URL parser, A1 camera stream, Bambu_* exports
-third_party/      nlohmann/json 3.11.3, Bambu Studio ABI headers (AGPL-3.0)
+third_party/      nlohmann/json 3.11.3; ABI headers of Bambu Studio (bambu/) and OrcaSlicer (orca/), AGPL-3.0
+scripts/          build, package, install, upstream (track new slicer releases)
 tests/            unit tests, probe tool, fake printer + integration test
-docs/             how it works, slicer↔plugin contract (with source line references)
+docs/             how it works, Studio/Orca ↔ plugin contracts, updating guide
 ```
 
 ## License

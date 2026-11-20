@@ -1,5 +1,5 @@
-// Extracted from BambuStudio v02.09.01.70 src/slic3r/Utils/NetworkAgent.hpp (AGPL-3.0).
-// Used only to static_assert our exported signatures match what the slicer dlsym()s.
+// Extracted from BambuStudio v02.09.01.70 src/slic3r/Utils/NetworkAgent.hpp (AGPL-3.0)
+// by scripts/upstream.sh. Used to static_assert our exported signatures.
 #pragma once
 #include "bambu_networking.hpp"
 namespace Slic3r { class BBLModelTask; using OnGetSubTaskFn = std::function<void(BBLModelTask*)>; }

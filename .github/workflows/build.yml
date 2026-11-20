@@ -1,10 +1,16 @@
 name: build
 
+# Every push / PR: build the plugins (Bambu Studio + OrcaSlicer networking,
+# shared camera plugin), run unit + integration tests, upload the tarball as a
+# workflow artifact.
+# Tag v*: additionally publish the tarball (+ .sha256) as a GitHub release.
+
 on:
   push:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -29,10 +35,22 @@ jobs:
           flatpak install --user -y --noninteractive flathub org.freedesktop.Sdk//26.08
 
       - name: Build, unit tests, package
-        run: scripts/package.sh "${GITHUB_REF_NAME}"
+        # Tags are named after the tag; anything else after `git describe`.
+        run: |
+          if [[ $GITHUB_REF_TYPE == tag ]]; then scripts/package.sh "$GITHUB_REF_NAME"
+          else scripts/package.sh; fi
 
-      - name: Integration tests (fake printer)
+      - name: Integration tests, Bambu Studio plugin (fake printer)
         run: BBL_TEST_APP=org.freedesktop.Sdk//26.08 tests/integration.sh
+
+      - name: Integration tests, OrcaSlicer plugin (fake printer)
+        run: BBL_TEST_TARGET=orca BBL_TEST_APP=org.freedesktop.Sdk//26.08 tests/integration.sh
+
+      - name: Integration tests, OrcaSlicer plugin loaded by a host-built process
+        # Like a distro/Nix OrcaSlicer: host glibc, libstdc++, OpenSSL, libcurl.
+        run: |
+          sudo apt-get install -y -qq g++ pkg-config libssl-dev libcurl4-openssl-dev
+          BBL_TEST_TARGET=orca BBL_TEST_RUNNER=native tests/integration.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -40,3 +58,36 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
+            dist/*.so
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bambu-lan-plugin-aarch64
+          path: dist
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist && sha256sum -c ./*.sha256 && cd ..
+          assets=(dist/*.tar.gz dist/*.tar.gz.sha256)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Release created by hand first: keep its assets, add any missing ones.
+            for a in "${assets[@]}"; do
+              gh release view "$TAG" --json assets -q '.assets[].name' | grep -qxF "${a##*/}" ||
+                gh release upload "$TAG" "$a"
+            done
+          else
+            gh release create "$TAG" "${assets[@]}" --title "$TAG" --notes-file docs/release-notes.md --verify-tag
+          fi

@@ -14,7 +14,7 @@ flatpak run --filesystem="$ROOT" --share=network --command=bash "$SDK" -c "
   cmake --build build -j\$(nproc)
   ctest --test-dir build --output-on-failure
   mkdir -p dist
-  cp build/libbambu_networking.so build/libBambuSource.so dist/
+  cp build/libbambu_networking.so build/libbambu_networking_orca.so build/libBambuSource.so dist/
   strip --strip-unneeded dist/*.so
 "
-echo "Built: $ROOT/dist/libbambu_networking.so $ROOT/dist/libBambuSource.so"
+echo "Built: $ROOT/dist/{libbambu_networking.so (Studio), libbambu_networking_orca.so (Orca), libBambuSource.so}"

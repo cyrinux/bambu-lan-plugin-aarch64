@@ -50,7 +50,17 @@ BBL_EXPORT int bambu_network_set_config_dir(void* agent, std::string config_dir)
 
 BBL_EXPORT int bambu_network_set_cert_file(void*, std::string, std::string) { return 0; }
 BBL_EXPORT int bambu_network_set_country_code(void*, std::string) { return 0; }
-BBL_EXPORT int bambu_network_start(void*) { return 0; }
+BBL_EXPORT int bambu_network_start(void* agent)
+{
+#ifdef BBL_TARGET_ORCA
+    // Orca calls start_discovery only once, at start-up, and only if the
+    // selected preset is a Bambu printer at that moment. Listen from start()
+    // so switching to a Bambu preset later still finds printers.
+    WITH_AGENT(agent, BAMBU_NETWORK_ERR_INVALID_HANDLE);
+    bbl_lan::guarded(__func__, false, [&] { return a->start_discovery(true); });
+#endif
+    return 0;
+}
 
 #define DEFINE_SETTER(fn_name, type, field)                               \
     BBL_EXPORT int bambu_network_##fn_name(void* agent, type fn)          \
@@ -61,7 +71,9 @@ BBL_EXPORT int bambu_network_start(void*) { return 0; }
     }
 
 DEFINE_SETTER(set_on_ssdp_msg_fn, OnMsgArrivedFn, on_ssdp_msg)
+#ifndef BBL_TARGET_ORCA  // not in Orca 2.4 ABI
 DEFINE_SETTER(set_on_user_login_fn, OnUserLoginFn, on_user_login)
+#endif
 DEFINE_SETTER(set_on_printer_connected_fn, OnPrinterConnectedFn, on_printer_connected)
 DEFINE_SETTER(set_on_server_connected_fn, OnServerConnectedFn, on_server_connected)
 DEFINE_SETTER(set_on_http_error_fn, OnHttpErrorFn, on_http_error)
@@ -146,7 +158,9 @@ BBL_CHECK(set_cert_file)
 BBL_CHECK(set_country_code)
 BBL_CHECK(start)
 BBL_CHECK(set_on_ssdp_msg_fn)
+#ifndef BBL_TARGET_ORCA
 BBL_CHECK(set_on_user_login_fn)
+#endif
 BBL_CHECK(set_on_printer_connected_fn)
 BBL_CHECK(set_on_server_connected_fn)
 BBL_CHECK(set_on_http_error_fn)

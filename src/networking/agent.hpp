@@ -20,7 +20,7 @@ struct Callbacks {
     BBL::OnMsgArrivedFn        on_ssdp_msg;
     BBL::OnLocalConnectedFn    on_local_connect;
     BBL::OnMessageFn           on_local_message;
-    BBL::OnUserLoginFn         on_user_login;
+    std::function<void(int, bool)> on_user_login;  // BBL::OnUserLoginFn (Studio only)
     BBL::OnPrinterConnectedFn  on_printer_connected;
     BBL::OnServerConnectedFn   on_server_connected;
     BBL::OnHttpErrorFn         on_http_error;

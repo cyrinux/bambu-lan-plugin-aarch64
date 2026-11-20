@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
-# End-to-end test of the built plugins against tests/fake_printer.py, run
-# inside Bambu Studio's own flatpak runtime (the environment that loads them).
+# End-to-end test of the built plugins against tests/fake_printer.py.
+#
+#   BBL_TEST_TARGET=studio|orca   which networking plugin to drive (default studio)
+#   BBL_TEST_RUNNER=flatpak       run the probe inside a flatpak runtime (default):
+#                                 Bambu Studio's when installed, else BBL_TEST_APP / the SDK
+#   BBL_TEST_RUNNER=native        compile the probe with the host compiler, linked to the
+#                                 host's OpenSSL/libcurl, and run it there (e.g. a NixOS
+#                                 OrcaSlicer: run under
+#                                 `nix-shell -p gcc pkg-config openssl curl --run ...`)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/bbl-lan-it.XXXXXX")"
@@ -15,17 +22,36 @@ python3 -I "$ROOT/tests/fake_printer.py" --cert "$WORK/cert.pem" --key "$WORK/ke
 FAKE_PID=$!
 sleep 1
 
-# Run the probe in Bambu Studio's runtime when installed (the real target),
-# otherwise in the SDK the plugins were built with (CI).
-if [[ -z ${BBL_TEST_APP:-} ]]; then
-  if flatpak info com.bambulab.BambuStudio >/dev/null 2>&1; then BBL_TEST_APP=com.bambulab.BambuStudio
-  else BBL_TEST_APP=org.freedesktop.Sdk//26.08; fi
+TARGET="${BBL_TEST_TARGET:-studio}"
+case "$TARGET" in
+  studio) PROBE="$ROOT/build/bbl_lan_probe" ;;
+  orca) PROBE="$ROOT/build/bbl_lan_probe_orca" ;;
+  *) echo "BBL_TEST_TARGET must be studio or orca" >&2; exit 2 ;;
+esac
+
+if [[ ${BBL_TEST_RUNNER:-flatpak} == native ]]; then
+  # The slicer process already has OpenSSL and libcurl loaded when it dlopen()s
+  # the plugin; linking the probe to them reproduces that.
+  defs=(); [[ $TARGET == orca ]] && defs=(-DBBL_TARGET_ORCA -I"$ROOT/third_party/orca")
+  libs="$(pkg-config --libs openssl libcurl)"
+  "${CXX:-g++}" -std=c++17 -O1 "${defs[@]}" -I"$ROOT/third_party/bambu" -I"$ROOT/third_party" \
+    "$ROOT/tests/probe.cpp" -o "$WORK/probe" -Wl,--no-as-needed \
+    $libs -ldl -lpthread
+  echo "running native probe ($TARGET): $(ldd "$WORK/probe" | grep -oE '(libc|libstdc\+\+|libssl|libcurl)\.so[^ ]* => [^ ]*' | tr '\n' ' ')"
+  probe() { (cd "$WORK" && BBL_ACCESS_CODE="$1" "$WORK/probe" "$ROOT/dist" "${@:2}"); }
+else
+  # Bambu Studio's runtime when installed (the real target), otherwise the SDK
+  # the plugins were built with (CI).
+  if [[ -z ${BBL_TEST_APP:-} ]]; then
+    if flatpak info com.bambulab.BambuStudio >/dev/null 2>&1; then BBL_TEST_APP=com.bambulab.BambuStudio
+    else BBL_TEST_APP=org.freedesktop.Sdk//26.08; fi
+  fi
+  echo "running probe ($TARGET) in $BBL_TEST_APP"
+  probe() {
+    flatpak run --share=network --filesystem="$ROOT" --filesystem="$WORK" --command=sh "$BBL_TEST_APP" -c \
+      "cd '$WORK' && BBL_ACCESS_CODE='$1' '$PROBE' '$ROOT/dist' ${*:2}"
+  }
 fi
-echo "running probe in $BBL_TEST_APP"
-probe() {
-  flatpak run --share=network --filesystem="$ROOT" --filesystem="$WORK" --command=sh "$BBL_TEST_APP" -c \
-    "cd '$WORK' && BBL_ACCESS_CODE='$1' '$ROOT/build/bbl_lan_probe' '$ROOT/dist' ${*:2}"
-}
 
 fail=0
 check() { # name, expected-substring, output

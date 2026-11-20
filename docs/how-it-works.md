@@ -144,3 +144,34 @@ Bambu Studio's flatpak runs on `org.gnome.Platform//51`, which is built on
 OpenSSL 3 and libcurl 4, and therefore the same `std::string` /
 `std::function` ABI as the slicer. The resulting libraries depend only on
 `libssl.so.3`, `libcrypto.so.3`, `libcurl.so.4`, `libstdc++.so.6` and `libc`.
+
+## 7. OrcaSlicer
+
+OrcaSlicer vendors Bambu's plugin API with its own changes (details and
+references: [orca-contract.md](orca-contract.md)):
+
+- **Different ABI.** Orca 2.4 targets Bambu's 02.03.00 plugin series: its
+  `PrintParams` lacks five fields Studio 2.9 has (so the struct layout differs),
+  `bind` has one parameter less, and a few Studio functions don't exist. The
+  networking plugin is therefore compiled twice from the same sources, once
+  against `third_party/bambu/` (Studio) and once against `third_party/orca/`
+  (`-DBBL_TARGET_ORCA`), and both are `static_assert`ed against their slicer's
+  typedefs. `libBambuSource.so` is shared: Orca's `BambuTunnel.h` is a subset of
+  Studio's with identical structs.
+- **Versioned file name.** Orca loads `libbambu_networking_<configured version>.so`
+  and, after loading, saves the plugin's own `get_version()` as the configured
+  version. We report `02.03.00.99` (same 8-character prefix as `02.03.00.62`,
+  higher than any Bambu build so Orca's updater leaves it alone) and install
+  under that name, plus `…_02.03.00.62-lan.so` so it is listed in Preferences.
+- **Lifecycle.** Orca can `dlclose()` the plugin on a hot reload without
+  destroying the agent, so both libraries are linked with `-z nodelete`. It
+  starts discovery only if a Bambu preset is selected at start-up, so the Orca
+  build starts listening in `start()`.
+- **Camera.** Orca plays the stream through a GStreamer `bambusrc` element
+  instead of `wxMediaCtrl3`; it uses the same `Bambu_*` calls and gets one JPEG
+  per sample, which GStreamer detects as `image/jpeg`.
+- **Environment.** A native Orca (e.g. nixpkgs) has its own glibc, libstdc++,
+  OpenSSL and libcurl. The SDK-built libraries only need glibc ≥ 2.38 and
+  GCC ≥ 13's libstdc++, and resolve `libssl.so.3`/`libcurl.so.4` against the
+  copies Orca has already loaded. `tests/integration.sh` with
+  `BBL_TEST_RUNNER=native` checks exactly that.
