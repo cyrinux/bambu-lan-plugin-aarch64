@@ -5,6 +5,7 @@
 
 #include "../common/tls_socket.hpp"
 #include "bambu_url.hpp"
+#include "video_source.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -30,37 +31,27 @@ JpegSize parse_jpeg_size(const uint8_t* data, size_t len);
 // Builds the 80-byte authentication packet.
 std::vector<uint8_t> build_camera_auth(const std::string& user, const std::string& password);
 
-struct CameraFrame {
-    std::vector<uint8_t> jpeg;
-    uint64_t             timestamp_ms = 0;
-};
-
-enum class CameraState { Idle, Connecting, Streaming, Failed, Closed };
-
-class CameraStream {
+class CameraStream final : public VideoSource {
 public:
     using LogFn = std::function<void(int level, const std::string& msg)>;
 
     CameraStream(LocalCameraUrl url, LogFn log);
-    ~CameraStream();
+    ~CameraStream() override;
     CameraStream(const CameraStream&)            = delete;
     CameraStream& operator=(const CameraStream&) = delete;
 
-    void start();
-    void stop();
+    void start() override;
+    void stop() override;
 
-    CameraState state() const { return m_state.load(); }
-    std::string last_error() const;
+    CameraState state() const override { return m_state.load(); }
+    std::string last_error() const override;
 
-    // Size from the first frame and measured frame rate; valid once
-    // ready_for_info() is true.
-    bool     ready_for_info() const;
-    JpegSize size() const;
-    int      frame_rate() const;
-    uint64_t frames_received() const;
+    // Size from the first frame and measured frame rate.
+    bool        ready_for_info() const override;
+    VideoFormat format() const override;
+    uint64_t    frames_received() const;
 
-    // Pops the oldest queued frame. Returns false when none is available.
-    bool pop_frame(CameraFrame* out);
+    bool pop_frame(VideoFrame* out) override;
 
 private:
     void run();
@@ -75,7 +66,7 @@ private:
     std::atomic<CameraState> m_state{CameraState::Idle};
 
     mutable std::mutex      m_mutex;
-    std::deque<CameraFrame> m_queue;
+    std::deque<VideoFrame>  m_queue;
     std::string             m_error;
     JpegSize                m_size;
     uint64_t                m_first_ts = 0;

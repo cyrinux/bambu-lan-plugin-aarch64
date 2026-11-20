@@ -5,6 +5,7 @@
 //   BBL_ACCESS_CODE=xxxx bbl_lan_probe <plugin_dir> connect <ip> <serial>
 //   BBL_ACCESS_CODE=xxxx bbl_lan_probe <plugin_dir> verify  <ip> <serial>
 //   BBL_ACCESS_CODE=xxxx bbl_lan_probe <plugin_dir> camera  <ip> <serial> <out.jpg>
+//   BBL_ACCESS_CODE=xxxx bbl_lan_probe <plugin_dir> camera_rtsp <ip>[:port] <out.h264>   (X1 and newer)
 //   BBL_ACCESS_CODE=xxxx bbl_lan_probe <plugin_dir> sdprint <ip> <serial> <file on printer>  (STARTS A PRINT)
 //   bbl_lan_probe <plugin_dir> version
 #include "BambuTunnel.h"
@@ -156,7 +157,7 @@ int cmd_cancel(void* agent, const std::string& ip)
     return 0;
 }
 
-int cmd_camera(const std::string& ip, const std::string& sn, const std::string& out)
+int run_camera(const std::string& url, const std::string& out)
 {
     using CreateFn = int (*)(Bambu_Tunnel*, const char*);
     using T1       = int (*)(Bambu_Tunnel);
@@ -168,8 +169,6 @@ int cmd_camera(const std::string& ip, const std::string& sn, const std::string& 
     using FreeLog  = void (*)(tchar const*);
 
     static FreeLog free_log = sym<FreeLog>(g_src, "Bambu_FreeLogMsg");
-    const std::string url = "bambu:///local/" + ip + ".?port=6000&user=bblp&passwd=" + access_code() + "&device=" + sn +
-                            "&net_ver=x&dev_ver=x&cli_id=probe&cli_ver=02.09.01.70";
     Bambu_Tunnel t = nullptr;
     if (sym<CreateFn>(g_src, "Bambu_Create")(&t, url.c_str()) != 0)
         return 1;
@@ -192,7 +191,8 @@ int cmd_camera(const std::string& ip, const std::string& sn, const std::string& 
                     info.format.video.frame_rate);
     Bambu_Sample s{};
     int          frames = 0;
-    while (rc == 0 && frames < 3) {
+    const int want = info.sub_type == AVC1 ? 10 : 3;
+    while (rc == 0 && frames < want) {
         const int r = sym<ReadFn>(g_src, "Bambu_ReadSample")(t, &s);
         if (r == Bambu_would_block) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -203,8 +203,10 @@ int cmd_camera(const std::string& ip, const std::string& sn, const std::string& 
             break;
         }
         ++frames;
-        std::printf("sample %d: %d bytes\n", frames, s.size);
-        if (FILE* f = std::fopen(out.c_str(), "wb")) {
+        std::printf("sample %d: %d bytes%s t=%llums\n", frames, s.size, (s.flags & f_sync) ? " sync" : "",
+                    static_cast<unsigned long long>(s.decode_time / 10000));
+        // JPEG: keep the last frame. H.264: append, so the file plays.
+        if (FILE* f = std::fopen(out.c_str(), info.sub_type == AVC1 && frames > 1 ? "ab" : "wb")) {
             std::fwrite(s.buffer, 1, static_cast<size_t>(s.size), f);
             std::fclose(f);
         }
@@ -214,12 +216,29 @@ int cmd_camera(const std::string& ip, const std::string& sn, const std::string& 
     return frames > 0 ? 0 : 1;
 }
 
+// A1/P1 camera (TLS port 6000, JPEG).
+int cmd_camera(const std::string& ip, const std::string& sn, const std::string& out)
+{
+    return run_camera("bambu:///local/" + ip + ".?port=6000&user=bblp&passwd=" + access_code() + "&device=" + sn +
+                          "&net_ver=x&dev_ver=x&cli_id=probe&cli_ver=02.09.01.70",
+                      out);
+}
+
+// X1 and newer (RTSPS, H.264). host may carry a port ("ip:8322"); default 322.
+int cmd_camera_rtsp(const std::string& host, const std::string& out)
+{
+    // Same shape as MediaPlayCtrl builds it.
+    return run_camera("bambu:///rtsps___bblp:" + access_code() + "@" + host +
+                          "/streaming/live/1?proto=rtsps&device=probe&net_ver=x&dev_ver=x&cli_id=probe&cli_ver=02.09.01.70",
+                      out);
+}
+
 } // namespace
 
 int main(int argc, char** argv)
 {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <plugin_dir> version|detect|connect|verify|camera ...\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <plugin_dir> version|detect|connect|verify|camera|camera_rtsp ...\n", argv[0]);
         return 2;
     }
     const std::string dir = argv[1];
@@ -253,6 +272,8 @@ int main(int argc, char** argv)
         rc = cmd_sdprint(agent, argv[3], argv[4], argv[5]);
     else if (cmd == "camera" && argc >= 6)
         rc = cmd_camera(argv[3], argv[4], argv[5]);
+    else if (cmd == "camera_rtsp" && argc >= 5)
+        rc = cmd_camera_rtsp(argv[3], argv[4]);
     NET(destroy_agent)(agent);
     std::printf("%s\n", rc == 0 ? "OK" : "FAILED");
     return rc;

@@ -72,3 +72,73 @@ std::optional<LocalCameraUrl> parse_local_camera_url(const std::string& url)
 }
 
 } // namespace bbl_lan
+
+namespace bbl_lan {
+
+std::string RtspCameraUrl::request_url() const
+{
+    return std::string(secure ? "rtsps://" : "rtsp://") + host + ":" + std::to_string(port) + path;
+}
+
+std::optional<RtspCameraUrl> parse_rtsp_camera_url(const std::string& url)
+{
+    static const std::string kSecure = "bambu:///rtsps___";
+    static const std::string kPlain  = "bambu:///rtsp___";
+    RtspCameraUrl            result;
+    std::string              rest;
+    if (url.compare(0, kSecure.size(), kSecure) == 0) {
+        rest = url.substr(kSecure.size());
+    } else if (url.compare(0, kPlain.size(), kPlain) == 0) {
+        result.secure = false;
+        result.port   = 554;
+        rest          = url.substr(kPlain.size());
+    } else {
+        return std::nullopt;
+    }
+    rest = rest.substr(0, rest.find('?'));
+
+    // <user>:<code>@<host>[:port]/<path>. The host and path have no '@', the
+    // code may contain '@' or ':'.
+    const auto at         = rest.rfind('@');
+    size_t     host_start = 0;
+    if (at != std::string::npos) {
+        const std::string cred  = rest.substr(0, at);
+        const auto        colon = cred.find(':');
+        result.user             = percent_decode(cred.substr(0, colon));
+        if (colon != std::string::npos)
+            result.password = percent_decode(cred.substr(colon + 1));
+        host_start = at + 1;
+    }
+    const auto  slash     = rest.find('/', host_start);
+    std::string authority = rest.substr(host_start, slash == std::string::npos ? std::string::npos : slash - host_start);
+    if (slash != std::string::npos)
+        result.path = rest.substr(slash);
+    // "[v6addr]:port", "host:port" or a bare host; brackets are dropped.
+    std::string port;
+    if (!authority.empty() && authority[0] == '[') {
+        const auto close = authority.find(']');
+        if (close == std::string::npos)
+            return std::nullopt;
+        if (close + 1 < authority.size()) {
+            if (authority[close + 1] != ':')
+                return std::nullopt;
+            port = authority.substr(close + 2);
+        }
+        authority = authority.substr(1, close - 1);
+    } else if (const auto colon = authority.rfind(':'); colon != std::string::npos) {
+        port = authority.substr(colon + 1);
+        authority.resize(colon);
+    }
+    if (!port.empty()) {
+        const long p = std::strtol(port.c_str(), nullptr, 10);
+        if (p <= 0 || p > 65535)
+            return std::nullopt;
+        result.port = static_cast<uint16_t>(p);
+    }
+    if (authority.empty() || result.user.empty())
+        return std::nullopt;
+    result.host = authority;
+    return result;
+}
+
+} // namespace bbl_lan

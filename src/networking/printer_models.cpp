@@ -21,6 +21,9 @@ constexpr PrinterModel kModels[] = {
     {"093", "O1S", "Bambu Lab H2S", false},
     {"31B", "O1C", "Bambu Lab H2C", false},
     {"32X", "N10", "Bambu Lab H3C", false},
+    // Listed by Studio 02.09.01 under its model id only (unreleased name).
+    {"35F", "N8", "Bambu Lab N8", false},
+    // "31B" is shared by O1C and O1C2 (both H2C); detection reports O1C.
 };
 
 } // namespace

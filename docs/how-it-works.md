@@ -80,8 +80,11 @@ references, are in [`slicer-contract.md`](slicer-contract.md). Highlights:
   sliced `.gcode.3mf`. The **slicer never builds the MQTT `project_file`
   command**: that is entirely the plugin's job.
 - **Camera:** Linux uses `wxMediaCtrl3` + libavcodec. It wants `Bambu_StartStream`
-  to return `would_block` until ready, a stream info of type `VIDE`/`MJPG` with
-  width ≥ 320 and frame rate > 0, then one complete JPEG per `Bambu_ReadSample`.
+  to return `would_block` until ready, a stream info of type `VIDE` with the
+  size and a frame rate > 0, then one complete frame per `Bambu_ReadSample`:
+  a JPEG (`MJPG`) or an H.264 access unit (`AVC1`). The decoder is opened
+  without extradata, so H.264 samples must carry SPS/PPS in-band before each
+  keyframe (`f_sync`).
 
 ## 3. The wire protocols
 
@@ -96,6 +99,7 @@ working Home Assistant `ha-bambulab` install:
 | Files | implicit-TLS FTP (FTPS) on 990. The printer requires TLS session reuse on the data channel, which libcurl does |
 | Start print | MQTT `{"print":{"command":"project_file","param":"Metadata/plate_N.gcode","url":"file:///sdcard/<file>",…}}`. X1/P1/A1 take `file:///sdcard/`, newer models `ftp:///` |
 | A1/P1 camera | TLS on 6000, 80-byte auth (`0x40`, `0x3000`, 0, 0, user[32], code[32]), then frames of a 16-byte header (u32le size, …) + one JPEG |
+| X1 and newer camera | standard RTSPS on 322 (`rtsps://bblp:<code>@<ip>:322/streaming/live/1`, what ha-bambulab and go2rtc use): DESCRIBE/SETUP/PLAY, H.264 in RTP (RFC 6184) interleaved on the TCP connection. The slicer passes it as `bambu:///rtsps___bblp:<code>@<ip>/streaming/live/1?proto=rtsps&…` when the printer reports an `rtsps` `ipcam.rtsp_url` |
 | Identity | the printer's TLS certificate CN is its serial. `bind_detect` reads it and maps the serial prefix to a model with Studio's own `resources/printers/*.json` (`sn_prefix`) |
 
 ## 4. Implementation
@@ -117,8 +121,11 @@ present in the flatpak runtime:
 - `src/networking/exports_*.cpp`: the C entry points. Cloud functions report "not
   logged in"; `ft_*` stubs fail cleanly so Studio falls back to FTPS. No
   exception can cross into the slicer.
-- `src/source/*`: `bambu:///local/<ip>.?port=6000&…` URL parser, camera reader
-  thread, `Bambu_*` exports.
+- `src/source/*`: the `Bambu_*` exports pick a `VideoSource` from the URL:
+  `CameraStream` (`bambu:///local/…`, JPEG) or `RtspStream`
+  (`bambu:///rtsps___…`). `rtsp.*` holds the I/O-free RTSP/SDP/Digest
+  helpers, `h264.*` the RTP depacketiser (single NAL, STAP-A, FU-A; drops to
+  the next keyframe after packet loss) and the SPS size parser.
 
 ## 5. Verification
 
@@ -126,11 +133,17 @@ present in the flatpak runtime:
   typedefs.
 - **Unit tests** (`tests/unit_tests.cpp`): URL parsing, SSDP → JSON, model table,
   `project_file` JSON, JPEG size parsing, camera auth packet.
+  `tests/unit_tests_rtsp.cpp`: RTSP URL/messages, Digest (RFC 2617 vector),
+  SDP, SPS cropping and depacketisation of a real x264 stream
+  (`tests/fixtures/camera_320x180.h264`), including packet loss.
 - **Integration** (`tests/integration.sh`): `tests/fake_printer.py` implements the printer side
   (TLS MQTT with CONNACK 5 on a bad code, report pushes, `project_file` ack,
-  port-6000 camera, certificate CN = serial). `bbl_lan_probe` loads the built
+  port-6000 camera, an RTSPS camera with Digest auth streaming the fixture,
+  certificate CN = serial). `bbl_lan_probe` loads the built
   libraries with `dlopen`/`dlsym` exactly like the slicer and drives detect,
-  connect, bad code, print-from-storage, camera, and disconnect-during-connect.
+  connect, bad code, print-from-storage, both cameras (good and bad code), and
+  disconnect-during-connect. The H.264 samples it writes decode with ffmpeg
+  and with GStreamer `h264parse ! openh264dec`.
   It runs inside Bambu Studio's own flatpak runtime.
 - **Review:** an independent concurrency/lifetime review led to the
   single-owner-thread design above.
@@ -169,7 +182,9 @@ references: [orca-contract.md](orca-contract.md)):
   build starts listening in `start()`.
 - **Camera.** Orca plays the stream through a GStreamer `bambusrc` element
   instead of `wxMediaCtrl3`; it uses the same `Bambu_*` calls and gets one JPEG
-  per sample, which GStreamer detects as `image/jpeg`.
+  or H.264 access unit per sample, which GStreamer typefinds as `image/jpeg` or
+  `video/x-h264` (byte-stream). H.264 needs `h264parse` and a decoder
+  (`openh264dec`, `avdec_h264`…) in Orca's GStreamer.
 - **Environment.** A native Orca (e.g. nixpkgs) has its own glibc, libstdc++,
   OpenSSL and libcurl. The SDK-built libraries only need glibc ≥ 2.38 and
   GCC ≥ 13's libstdc++, and resolve `libssl.so.3`/`libcurl.so.4` against the

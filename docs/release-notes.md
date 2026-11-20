@@ -9,4 +9,6 @@ Install: close the slicer, extract the tarball, then run:
 
 Add `--uninstall` to restore the original files.
 
+Live camera: A1/P1 (JPEG, port 6000) and, untested on real hardware, X1 and newer models (RTSPS H.264, port 322).
+
 `COMPAT` lists the exact slicer versions. See the README for supported printers and features. LAN only: no Bambu cloud, no SD-card file browser.

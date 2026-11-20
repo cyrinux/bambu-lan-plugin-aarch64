@@ -115,6 +115,9 @@ void test_models()
     CHECK(!model_from_serial("ZZZ").has_value());
     CHECK_EQ(project_file_url("03900A000000001", "a.gcode.3mf"), "file:///sdcard/a.gcode.3mf");
     CHECK_EQ(project_file_url("22E000", "a.gcode.3mf"), "ftp:///a.gcode.3mf");
+    CHECK_EQ(std::string(model_from_serial("35F00A")->model_id), "N8");
+    CHECK_EQ(project_file_url("35F00A", "a.gcode.3mf"), "ftp:///a.gcode.3mf");
+    CHECK_EQ(project_file_url("00M00A", "a.gcode.3mf"), "file:///sdcard/a.gcode.3mf"); // X1 Carbon
 }
 
 void test_project_file()

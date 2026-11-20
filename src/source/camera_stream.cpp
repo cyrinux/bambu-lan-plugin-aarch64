@@ -120,10 +120,10 @@ bool CameraStream::ready_for_info() const
     return m_size.width > 0 && m_fps > 0;
 }
 
-JpegSize CameraStream::size() const
+VideoFormat CameraStream::format() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_size;
+    return VideoFormat{VideoCodec::Jpeg, m_size.width, m_size.height, m_fps};
 }
 
 uint64_t CameraStream::frames_received() const
@@ -132,13 +132,7 @@ uint64_t CameraStream::frames_received() const
     return m_frames;
 }
 
-int CameraStream::frame_rate() const
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_fps;
-}
-
-bool CameraStream::pop_frame(CameraFrame* out)
+bool CameraStream::pop_frame(VideoFrame* out)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_queue.empty())
@@ -218,9 +212,9 @@ bool CameraStream::stream_once()
             m_sock.close();
             return false;
         }
-        CameraFrame frame;
-        frame.jpeg.resize(size);
-        if (m_sock.read_exact(frame.jpeg.data(), size, kFrameTimeoutMs) != IoResult::Ok) {
+        VideoFrame frame;
+        frame.data.resize(size);
+        if (m_sock.read_exact(frame.data.data(), size, kFrameTimeoutMs) != IoResult::Ok) {
             set_error("camera frame truncated");
             m_sock.close();
             return false;
@@ -231,7 +225,7 @@ bool CameraStream::stream_once()
 
         std::lock_guard<std::mutex> lock(m_mutex);
         if (m_size.width == 0)
-            m_size = parse_jpeg_size(frame.jpeg.data(), frame.jpeg.size());
+            m_size = parse_jpeg_size(frame.data.data(), frame.data.size());
         if (m_frames == 0)
             m_first_ts = frame.timestamp_ms;
         ++m_frames;

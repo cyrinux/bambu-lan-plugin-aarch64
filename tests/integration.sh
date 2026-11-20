@@ -18,7 +18,8 @@ trap 'kill "${FAKE_PID:-0}" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$SERIAL" \
   -keyout "$WORK/key.pem" -out "$WORK/cert.pem" 2>/dev/null
 python3 -I "$ROOT/tests/fake_printer.py" --cert "$WORK/cert.pem" --key "$WORK/key.pem" \
-  --code "$CODE" --serial "$SERIAL" >"$WORK/fake.log" 2>&1 &
+  --code "$CODE" --serial "$SERIAL" --h264 "$ROOT/tests/fixtures/camera_320x180.h264" --rtsp-port 8322 \
+  >"$WORK/fake.log" 2>&1 &
 FAKE_PID=$!
 sleep 1
 
@@ -66,6 +67,10 @@ check sdprint    "start_sdcard_print rc=0"            "$(probe "$CODE" sdprint 1
 # 192.0.2.1 (TEST-NET-1) is unroutable: connects hang until cancelled.
 check cancel     "OK"                                  "$(probe x cancel 192.0.2.1 || true)"
 check camera_bad "Bambu_StartStream rc=-1"            "$(probe wrong camera 127.0.0.1 "$SERIAL" "$WORK/frame.jpg" || true)"
+# X1-style RTSPS camera: Digest auth, H.264 (sub_type 0 = AVC1), SPS from the SDP.
+check camera_rtsp     "stream: sub_type=0 320x180 @15fps" "$(probe "$CODE" camera_rtsp 127.0.0.1:8322 "$WORK/frame.h264" || true)"
+check camera_rtsp_key "sample 1: [0-9]* bytes sync"        "$(probe "$CODE" camera_rtsp 127.0.0.1:8322 "$WORK/frame.h264" || true)"
+check camera_rtsp_bad "access code refused"                "$(probe wrong camera_rtsp 127.0.0.1:8322 "$WORK/frame.h264" || true)"
 
 echo "--- fake printer log"; cat "$WORK/fake.log"
 exit $fail

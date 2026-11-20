@@ -48,6 +48,13 @@ Source: research/bambustudio-src @ v02.09.01.70. DeviceManager lives in
   cmdtype LIST_INFO=1, SUB_FILE=2, FILE_DEL=3, FILE_DOWNLOAD=4, FILE_UPLOAD=5, MEDIA_ABILITY=7.
   On A1 the wire protocol behind this is proprietary (port 6000 ctrl channel) → v1 unsupported.
 
+- RTSP URL (X1 and newer, chosen from the printer's `ipcam.rtsp_url`):
+  `bambu:///rtsps___<user>:<code>@<ip>/streaming/live/1?proto=rtsps&device=..&net_ver=..&dev_ver=..&cli_id=..&cli_ver=..`
+  (`rtsp___` / `proto=rtsp` for a plain rtsp_url). Stream info: VIDE, sub_type AVC1,
+  format_type video_avc_byte_stream; samples are Annex-B access units, f_sync on IDR.
+  Studio's AVVideoDecoder opens AV_CODEC_ID_H264 without extradata; Orca's bambusrc
+  advertises ANY caps and lets GStreamer typefind.
+
 ## A1 camera wire protocol (port 6000, community-documented)
 - TLS (no verify). Send 80-byte auth: u32le 0x40, u32le 0x3000, u32 0, u32 0,
   "bblp" padded to 32 bytes, access code padded to 32 bytes.

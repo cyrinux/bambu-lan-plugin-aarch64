@@ -102,7 +102,7 @@ what would break us.
 | Connection | `GUI_App.cpp` local-connect lambda | meaning of `status` / `msg` (e.g. the `"5"` code) | `agent.cpp` `connect_failure_msg`, `run_link` |
 | Printing | `PrintJob.cpp`, `SendJob.cpp` | which `start_*` function is called, `PrintParams` fields set, stage/progress meaning, `verify_job` | `print_job.cpp` |
 | `ft_*` tunnel | `FileTransferUtils.*` and its callers | new unchecked calls, or LAN flows that now *require* the tunnel | `exports_ft.cpp` (compare with `third_party/bambu/FileTransferUtils.hpp.ref`) |
-| Camera | `MediaPlayCtrl.cpp` (URL), `wxMediaCtrl3.cpp` (call sequence), `Printer/BambuTunnel.h` | URL format `bambu:///local/...`, required `Bambu_*` symbols, `Bambu_StreamInfo` / `Bambu_Sample` layout, frame-rate/size rules | `src/source/` |
+| Camera | `MediaPlayCtrl.cpp` (URL), `wxMediaCtrl3.cpp` (call sequence), `Printer/BambuTunnel.h` | URL formats `bambu:///local/...` and `bambu:///rtsps___...`, required `Bambu_*` symbols, `Bambu_StreamInfo` / `Bambu_Sample` layout, frame-rate/size rules | `src/source/` |
 | Models | `resources/printers/*.json` | new models (`sn_prefix`, `model_id`) | `printer_models.cpp` table + unit test |
 
 When behaviour changes, update `docs/slicer-contract.md` (keep the file:line
@@ -130,13 +130,14 @@ Then, in Studio:
 - [ ] no "Network Plug-in is not detected" notice
 - [ ] Device tab: the printer connects (add by IP if needed) and status updates
 - [ ] a wrong access code shows "Incorrect password"
-- [ ] live camera shows frames (A1/P1)
+- [ ] live camera shows frames (A1/P1 JPEG; X1 and newer RTSPS/H.264)
 - [ ] send a small print, which starts on the printer
 - [ ] "Send to printer storage" uploads a file
 - [ ] `log/bambu_lan_plugin.log` has no `ERROR` lines
 
 Without the GUI, against the real printer:
-`BBL_ACCESS_CODE=… build/bbl_lan_probe dist connect|verify|camera <ip> <serial> …`.
+`BBL_ACCESS_CODE=… build/bbl_lan_probe dist connect|verify|camera <ip> <serial> …`,
+or `… camera_rtsp <ip> out.h264` for an RTSPS camera (`ffplay out.h264` to watch it).
 
 ## 5b. OrcaSlicer
 

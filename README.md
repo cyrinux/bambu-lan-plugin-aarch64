@@ -27,14 +27,18 @@ libstdc++ from GCC ≥ 13, OpenSSL 3 and libcurl 4 (any 2024+ distribution).
 
 All Bambu printers use the same LAN protocols for discovery, MQTT and FTPS, so
 status, control and printing should work beyond the A1. The camera is the
-main difference.
+main difference: A1/P1 send JPEG frames on port 6000, the X1 and newer models
+stream H.264 over RTSPS on port 322. The plugin handles both.
 
 | Printer | Status / control / print | Camera | Notes |
 |---|---|---|---|
 | A1 | ✅ tested | ✅ tested | |
 | A1 mini, P1P, P1S | ✅ expected | ✅ expected | same port-6000 JPEG camera and `file:///sdcard/` print URL as the A1 |
-| X1, X1 Carbon, X1E | ✅ expected | ❌ | camera is RTSPS (port 322, H.264), not implemented |
-| P2S, H2D, H2D Pro, H2S, H2C, X2D, A2L, H3C | ⚠️ untested | ❌ | `ftp:///` print URL; may need the `ft_*` tunnel (eMMC) or signed commands on newer firmware |
+| X1, X1 Carbon, X1E | ✅ expected | ⚠️ untested | RTSPS camera (port 322, H.264), tested against a simulated printer only; enable "LAN Only Liveview" on the printer |
+| P2S, H2D, H2D Pro, H2S, H2C, X2D, A2L, H3C, N8 | ⚠️ untested | ⚠️ untested | `ftp:///` print URL; RTSPS camera when the printer reports one; may need the `ft_*` tunnel (eMMC) or signed commands on newer firmware |
+
+The slicer picks the camera protocol from the printer's own report
+(`ipcam.rtsp_url`), so the plugin follows whatever the printer announces.
 
 Whatever the model, the printer must be in **LAN-only mode with Developer Mode**
 enabled on recent firmware, because this plugin cannot sign commands.
@@ -51,6 +55,7 @@ enabled on recent firmware, because this plugin cannot sign commands.
 | Send to printer storage | FTPS upload |
 | Print from printer storage | MQTT `project_file` |
 | Live camera (A1/P1) | TLS port 6000, 80-byte auth, JPEG frames → MJPEG stream for Studio's decoder |
+| Live camera (X1 and newer) | RTSP over TLS port 322 (Basic/Digest auth), RTP/H.264 interleaved on TCP → Annex-B access units (SPS/PPS before every keyframe) for libavcodec (Studio) or GStreamer (Orca) |
 
 ## Not supported (by design)
 
@@ -58,6 +63,7 @@ enabled on recent firmware, because this plugin cannot sign commands.
   The plugin reports "not logged in"; cloud calls fail cleanly.
 - Printer file browser (timelapse/model list on the SD card): proprietary protocol on the port-6000
   control channel. Studio shows its normal "unavailable" state.
+- Plain (non-TLS) `rtsp://` cameras: no current printer is known to announce one.
 - The `ft_*` file-transfer tunnel (eMMC printers, brtc). Studio falls back to FTPS.
 - Message signing. Recent firmware requires **LAN-only mode + Developer Mode** on the printer
   for unsigned third-party control (Settings → LAN Only Mode → Developer Mode on the printer screen).
@@ -147,6 +153,9 @@ including MQTT traffic.
 - **"Incorrect password"**: the access code changed on the printer, or LAN-only mode is off.
 - **Connects, but commands are ignored**: enable Developer Mode on the printer (unsigned control).
 - **Printer not discovered**: SSDP broadcasts don't cross VLANs/VPNs; add it by IP.
+- **X1/H2 camera stays black**: enable LAN live view on the printer ("LAN Only Liveview"),
+  and for OrcaSlicer make sure GStreamer has an H.264 decoder (`openh264dec` or `avdec_h264`).
+  The plugin log (`bambu_lan_plugin.log`) names the RTSP step that failed.
 
 ## Testing against a real printer without the GUI
 
@@ -156,7 +165,8 @@ P=build/bbl_lan_probe
 $P dist detect  192.168.1.50
 $P dist connect 192.168.1.50 <serial>
 $P dist verify  192.168.1.50 <serial>          # FTPS login check (Studio's "verify_job")
-$P dist camera  192.168.1.50 <serial> frame.jpg
+$P dist camera  192.168.1.50 <serial> frame.jpg  # A1/P1
+$P dist camera_rtsp 192.168.1.50 live.h264        # X1 and newer; play with: ffplay live.h264
 ```
 
 Run them inside Studio's runtime to test the exact environment:
@@ -181,10 +191,10 @@ packagers (e.g. a Nix `fetchurl`).
 ```
 src/common/       logger, OpenSSL TLS socket
 src/networking/   libbambu_networking*.so: agent, MQTT, SSDP, FTPS, print jobs, C exports
-src/source/       libBambuSource.so: bambu:///local URL parser, A1 camera stream, Bambu_* exports
+src/source/       libBambuSource.so: camera URL parsing, A1/P1 JPEG stream, RTSPS/H.264 stream, Bambu_* exports
 third_party/      nlohmann/json 3.11.3; ABI headers of Bambu Studio (bambu/) and OrcaSlicer (orca/), AGPL-3.0
 scripts/          build, package, install, upstream (track new slicer releases)
-tests/            unit tests, probe tool, fake printer + integration test
+tests/            unit tests, probe tool, fake printer (MQTT, both cameras) + integration test
 docs/             how it works, Studio/Orca ↔ plugin contracts, updating guide
 ```
 

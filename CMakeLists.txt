@@ -70,7 +70,8 @@ endfunction()
 bbl_networking_variant(bambu_networking ${CMAKE_SOURCE_DIR}/third_party/bambu bambu_networking BBL_TARGET_STUDIO)
 bbl_networking_variant(orca_networking ${CMAKE_SOURCE_DIR}/third_party/orca bambu_networking_orca BBL_TARGET_ORCA)
 
-add_library(bbl_source_core STATIC src/source/bambu_url.cpp src/source/camera_stream.cpp)
+add_library(bbl_source_core STATIC src/source/bambu_url.cpp src/source/camera_stream.cpp src/source/h264.cpp
+            src/source/rtsp.cpp src/source/rtsp_stream.cpp)
 target_link_libraries(bbl_source_core PUBLIC bbl_common)
 
 # libBambuSource is shared by both slicers: Orca's BambuTunnel.h is a subset
@@ -85,6 +86,10 @@ if(BBL_LAN_BUILD_TESTS)
   add_executable(unit_tests tests/unit_tests.cpp)
   target_link_libraries(unit_tests PRIVATE bambu_networking_core bbl_source_core)
   add_test(NAME unit_tests COMMAND unit_tests)
+  add_executable(unit_tests_rtsp tests/unit_tests_rtsp.cpp)
+  target_link_libraries(unit_tests_rtsp PRIVATE bbl_source_core)
+  target_compile_definitions(unit_tests_rtsp PRIVATE BBL_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+  add_test(NAME unit_tests_rtsp COMMAND unit_tests_rtsp)
 
   # Manual tools for testing against a real printer.
   # Manual/integration tool, one per ABI (it calls the plugin through the
