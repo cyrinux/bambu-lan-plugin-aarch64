@@ -1,5 +1,6 @@
 #include "mqtt_client.hpp"
 
+#include "../common/aes_cbc.hpp"
 #include "../common/log.hpp"
 
 #include <chrono>
@@ -162,12 +163,42 @@ bool MqttClient::publish(const std::string& topic, const std::string& payload, i
     if (!m_connected)
         return false;
     const int   q = qos > 0 ? 1 : 0;
-    std::string body;
-    put_str(&body, topic);
-    if (q == 1)
-        put_u16(&body, next_packet_id());
-    body.append(payload);
-    return send_packet(static_cast<uint8_t>(kPublish | (q << 1)), body);
+    const auto  mode        = m_cipher_mode.load();
+    const bool  have_cipher = !m_cipher_key.empty();
+    // auto sends both copies; the printer processes only the one matching its
+    // mode (a hybrid printer ignores plaintext, a LAN-only printer cannot
+    // parse base64 JSON), and the first answer settles the mode.
+    const bool send_plain = mode != CipherMode::aes && (mode != CipherMode::auto_ || have_cipher);
+    const bool send_aes   = have_cipher && mode != CipherMode::plain;
+
+    bool ok = true;
+    if (send_plain) {
+        std::string body;
+        put_str(&body, topic);
+        if (q == 1)
+            put_u16(&body, next_packet_id());
+        body.append(payload);
+        ok = send_packet(static_cast<uint8_t>(kPublish | (q << 1)), body) && ok;
+    }
+    if (send_aes) {
+        const std::string enc = aes128_cbc_encrypt_b64(payload, m_cipher_key);
+        if (enc.empty()) {
+            LOG_E("mqtt: AES encrypt failed");
+            ok = false;
+        } else {
+            std::string body;
+            put_str(&body, topic);
+            if (q == 1) {
+                // Same packet id as the plain copy when both go out: they are
+                // one logical message to the printer, which acks only one.
+                const uint16_t pid = send_plain ? static_cast<uint16_t>(m_packet_id.load()) : next_packet_id();
+                put_u16(&body, pid);
+            }
+            body.append(enc);
+            ok = send_packet(static_cast<uint8_t>(kPublish | (q << 1)), body) && ok;
+        }
+    }
+    return ok;
 }
 
 void MqttClient::handle_publish(uint8_t header, const std::string& body, const MessageFn& on_message)
@@ -189,8 +220,32 @@ void MqttClient::handle_publish(uint8_t header, const std::string& body, const M
     }
     if (!on_message)
         return;
+    const std::string raw = body.substr(pos);
+
+    // Hybrid-mode payload handling (see set_cipher): the first payload that
+    // parses decides the mode; afterwards one form only. A payload of the
+    // other form (printer toggled LAN-only mid-session) re-decides.
+    std::string payload  = raw;
+    const auto  mode     = m_cipher_mode.load();
+    if (!m_cipher_key.empty() && mode != CipherMode::plain) {
+        if (!raw.empty() && (raw.front() == '{' || raw.front() == '[')) {
+            if (mode == CipherMode::aes)
+                LOG_I("mqtt: printer switched to plaintext payloads (LAN-only mode?)");
+            m_cipher_mode.store(CipherMode::plain);
+        } else {
+            const auto dec = aes128_cbc_decrypt_b64(raw, m_cipher_key);
+            if (!dec) {
+                LOG_D("mqtt: payload neither JSON nor AES-for-this-key, ignored");
+                return; // puback already sent
+            }
+            if (mode != CipherMode::aes)
+                LOG_I("mqtt: hybrid mode detected, payloads are AES-encrypted");
+            m_cipher_mode.store(CipherMode::aes);
+            payload = *dec;
+        }
+    }
     try {
-        on_message(topic, body.substr(pos));
+        on_message(topic, payload);
     } catch (const std::exception& e) {
         LOG_E("mqtt: message handler threw: ", e.what());
     } catch (...) {

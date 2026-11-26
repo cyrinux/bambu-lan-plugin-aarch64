@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
-"""Minimal fake Bambu printer for integration tests (stdlib only).
+"""Minimal fake Bambu printer for integration tests (stdlib + openssl CLI).
 
 TLS MQTT on --mqtt-port (CONNACK 5 on wrong password, echoes pushall with a
 report, acks project_file), the A1 camera protocol on --camera-port and, with
 --h264, the X1-style RTSPS camera on --rtsp-port (Digest auth, H.264 over RTP
 interleaved on the RTSP connection; SPS/PPS only in the SDP).
+With --hybrid the MQTT payloads use the hybrid-mode AES-128-CBC encryption
+(key/iv = access code padded to 16 ASCII chars with '0', PKCS7, base64):
+plaintext requests are ignored and reports come back encrypted, like a
+printer that is not in LAN-only mode.
 Certificate CN is the serial, like a real printer.
 
     fake_printer.py --cert c.pem --key k.pem --code 12345678 --serial 03900A000000001
 """
 import argparse
 import base64
+import binascii
 import hashlib
 import json
+import subprocess
 import socket
 import ssl
 import struct
@@ -63,10 +69,48 @@ def mqtt_str(s):
     return struct.pack(">H", len(b)) + b
 
 
+def aes_key_hex(code):
+    """Bambu hybrid-mode key AND iv: the ASCII code padded right with '0' to 16 chars."""
+    key = (code[:16].ljust(16, "0")).encode()
+    return key.hex()
+
+
+def aes_encrypt(plain, code):
+    p = subprocess.run(["openssl", "enc", "-aes-128-cbc", "-K", aes_key_hex(code),
+                        "-iv", aes_key_hex(code)],
+                       input=plain.encode(), capture_output=True, check=True)
+    return base64.b64encode(p.stdout).decode()
+
+
+def aes_try_decrypt(b64, code):
+    """Plaintext when b64 decrypts to JSON with this code's key, else None."""
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    p = subprocess.run(["openssl", "enc", "-d", "-aes-128-cbc", "-K", aes_key_hex(code),
+                        "-iv", aes_key_hex(code)],
+                       input=raw, capture_output=True)
+    if p.returncode != 0:
+        return None
+    try:
+        text = p.stdout.decode()
+    except UnicodeDecodeError:
+        return None
+    if not text or text[0] not in "{[":
+        return None
+    return text
+
+
 def publish(sock, lock, topic, payload):
     body = mqtt_str(topic) + payload.encode()
     with lock:
         sock.sendall(bytes([0x30]) + encode_len(len(body)) + body)
+
+
+def report_payload(text, args):
+    """Wire form of a report payload: AES base64 in hybrid mode, JSON in LAN mode."""
+    return aes_encrypt(text, args.code) if args.hybrid else text
 
 
 def handle_mqtt(conn, args):
@@ -87,7 +131,7 @@ def handle_mqtt(conn, args):
     password = take() if flags & 0x40 else ""
     ok = user == "bblp" and password == args.code
     conn.sendall(bytes([0x20, 2, 0, 0 if ok else 5]))
-    print(f"mqtt: CONNECT user={user} ok={ok}", flush=True)
+    print(f"mqtt: CONNECT user={user} ok={ok} hybrid={args.hybrid}", flush=True)
     if not ok:
         return
     report = f"device/{args.serial}/report"
@@ -106,17 +150,34 @@ def handle_mqtt(conn, args):
             pos = 2 + tlen + (2 if qos else 0)
             if qos:
                 conn.sendall(bytes([0x40, 2]) + body[2 + tlen:4 + tlen])
-            msg = json.loads(body[pos:])
+            raw = body[pos:].decode()
+            # A hybrid printer only understands encrypted requests; a LAN-only
+            # one only plaintext. Anything else is silently ignored, which is
+            # what the plugin's auto mode relies on.
+            if raw[:1] in "{[":
+                if args.hybrid:
+                    print("mqtt: ignored plaintext request (hybrid mode)", flush=True)
+                    continue
+                msg_txt = raw
+            else:
+                msg_txt = aes_try_decrypt(raw, args.code)
+                if msg_txt is None:
+                    print("mqtt: undecryptable request, ignored", flush=True)
+                    continue
+                if not args.hybrid:
+                    print("mqtt: ignored encrypted request (LAN-only mode)", flush=True)
+                    continue
+            msg = json.loads(msg_txt)
             print(f"mqtt: request {json.dumps(msg)[:200]}", flush=True)
             if "pushing" in msg:
-                publish(conn, lock, report, json.dumps(
+                publish(conn, lock, report, report_payload(json.dumps(
                     {"print": {"command": "push_status", "gcode_state": "IDLE", "nozzle_temper": 25.0,
-                               "sequence_id": "1", "msg": 0}}))
+                               "sequence_id": "1", "msg": 0}}), args))
             elif msg.get("print", {}).get("command") == "project_file":
                 seq = msg["print"]["sequence_id"]
-                publish(conn, lock, report, json.dumps(
+                publish(conn, lock, report, report_payload(json.dumps(
                     {"print": {"command": "project_file", "sequence_id": seq, "result": "success",
-                               "param": msg["print"]["param"]}}))
+                               "param": msg["print"]["param"]}}), args))
 
 
 def handle_camera(conn, args):
@@ -272,6 +333,8 @@ def main():
     p.add_argument("--camera-port", type=int, default=6000)
     p.add_argument("--rtsp-port", type=int, default=8322)
     p.add_argument("--h264", help="Annex-B H.264 file for the RTSPS camera")
+    p.add_argument("--hybrid", action="store_true",
+                   help="non-LAN-only mode: AES-encrypted MQTT payloads only")
     p.add_argument("--frames", type=int, default=20)
     args = p.parse_args()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

@@ -1,7 +1,10 @@
 #include "agent.hpp"
 
+#include "../common/aes_cbc.hpp"
 #include "../common/log.hpp"
 
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <random>
 #include <vector>
@@ -27,6 +30,31 @@ std::string connect_failure_msg(const MqttConnectResult& r)
     if (r.connack_code == 4 || r.connack_code == 5)
         return "5";
     return r.connack_code > 0 ? std::to_string(r.connack_code) : std::to_string(BAMBU_NETWORK_ERR_CONNECTION_TO_PRINTER_FAILED);
+}
+
+// BBL_LAN_MQTT_CIPHER=plain|aes pins the hybrid-mode payload cipher for
+// debugging; default auto: publish both forms, the printer's first answer
+// settles the mode (see MqttClient::set_cipher).
+MqttClient::CipherMode cipher_mode_from_env()
+{
+    const char* env = std::getenv("BBL_LAN_MQTT_CIPHER");
+    if (env != nullptr) {
+        const std::string v = env;
+        if (v == "plain")
+            return MqttClient::CipherMode::plain;
+        if (v == "aes")
+            return MqttClient::CipherMode::aes;
+    }
+    return MqttClient::CipherMode::auto_;
+}
+
+const char* cipher_mode_name(MqttClient::CipherMode m)
+{
+    switch (m) {
+    case MqttClient::CipherMode::plain: return "plain";
+    case MqttClient::CipherMode::aes: return "aes";
+    default: return "auto";
+    }
 }
 
 template <typename Fn, typename... Args> void invoke_safely(const char* what, const Fn& fn, Args&&... args)
@@ -113,11 +141,17 @@ int Agent::connect_printer(const std::string& dev_id, const std::string& ip, con
     link->ip     = ip;
 
     MqttOptions opts;
-    opts.host      = ip;
-    opts.port      = 8883;
     opts.client_id = random_client_id();
     opts.username  = user.empty() ? "bblp" : user;
     opts.password  = password;
+    // Tests drive the fake printer on a non-privileged port; accept the same
+    // host[:port] form as the RTSP camera path.
+    opts.host = ip;
+    if (const auto colon = ip.rfind(':'); colon != std::string::npos && ip.find(']') == std::string::npos) {
+        opts.host = ip.substr(0, colon);
+        const long p = std::strtol(ip.c_str() + colon + 1, nullptr, 10);
+        opts.port    = p > 0 && p <= 65535 ? static_cast<uint16_t>(p) : 8883;
+    }
     LOG_I("connect_printer ", dev_id, " @ ", ip, " user=", opts.username, " code=", redact(password));
 
     {
@@ -154,7 +188,13 @@ void Agent::run_link(const LinkPtr& link, const MqttOptions& opts)
                           std::to_string(BAMBU_NETWORK_ERR_CONNECTION_TO_PRINTER_FAILED));
             return;
         }
-        LOG_I("connected to printer ", dev_id);
+        // Hybrid vs LAN-only detection: with a valid access code the client
+        // can encrypt; auto mode then lets the printer's own replies decide.
+        // (Empty user/password sessions are the bad-code test path: plaintext
+        // only, matching what a non-owner can send.)
+        if (!opts.password.empty())
+            link->mqtt.set_cipher(bambu_cipher_key(opts.password), cipher_mode_from_env());
+        LOG_I("connected to printer ", dev_id, ", cipher mode ", cipher_mode_name(link->mqtt.cipher_mode()));
         invoke_safely("local_connect", on_connect, static_cast<int>(BBL::ConnectStatusOk), dev_id, std::string("0"));
 
         const std::string reason = link->mqtt.run(

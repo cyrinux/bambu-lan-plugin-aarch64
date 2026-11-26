@@ -26,7 +26,7 @@ endif()
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 
 # Static helper libraries shared by the plugins and the tests.
-add_library(bbl_common STATIC src/common/log.cpp src/common/tls_socket.cpp)
+add_library(bbl_common STATIC src/common/log.cpp src/common/tls_socket.cpp src/common/aes_cbc.cpp)
 target_include_directories(bbl_common PUBLIC src third_party)
 target_link_libraries(bbl_common PUBLIC OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 

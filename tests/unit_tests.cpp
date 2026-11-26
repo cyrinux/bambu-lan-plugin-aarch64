@@ -1,4 +1,5 @@
 // Dependency-free unit tests for the protocol helpers.
+#include "common/aes_cbc.hpp"
 #include "networking/print_job.hpp"
 #include "networking/printer_models.hpp"
 #include "networking/ftps_upload.hpp"
@@ -31,6 +32,7 @@ int g_checks   = 0;
 
 using json = nlohmann::json;
 using namespace bbl_lan;
+using bbl_lan::aes128_cbc_decrypt_b64; // unambiguous against the CHECK macro
 
 void test_url_parsing()
 {
@@ -172,6 +174,41 @@ void test_ftp_escape()
     CHECK_EQ(ftp_escape_path("/a#b"), "/a%23b");
 }
 
+void test_hybrid_cipher()
+{
+    // bambu_mqtt_control's "MQTT encryption" example: AES-128-CBC, key AND iv
+    // = the ASCII access code padded right with '0' to 16 bytes, PKCS7, base64.
+    CHECK_EQ(bambu_cipher_key("12345678"), "1234567800000000");
+    CHECK_EQ(bambu_cipher_key("ab/cd1234"), "ab/cd12340000000"); // '/' is fine: raw bytes
+    CHECK_EQ(bambu_cipher_key(""), "0000000000000000");
+    CHECK_EQ(bambu_cipher_key("0123456789abcdefghij"), "0123456789abcdef"); // truncated
+
+    const std::string key = bambu_cipher_key("12345678");
+    const std::string enc = aes128_cbc_encrypt_b64(
+        R"({"print":{"command":"pushall","sequence_id":"1","version":1,"push_target":1}})", key);
+    CHECK(!enc.empty());
+    CHECK(enc.size() % 4 == 0);
+    const auto dec = aes128_cbc_decrypt_b64(enc, key);
+    CHECK(dec.has_value());
+    if (dec)
+        CHECK_EQ(*dec, R"({"print":{"command":"pushall","sequence_id":"1","version":1,"push_target":1}})");
+
+    // Cross-check with the openssl CLI (independent implementation):
+    //   echo -n '{"a":1}' | openssl enc -aes-128-cbc -K <keyhex> -iv <keyhex> | base64
+    CHECK_EQ(aes128_cbc_encrypt_b64(R"({"a":1})", "0123456789abcdef"), "gdHWPMdZHkQXogGjWub2Aw==");
+
+    // Wrong key: padding check fails -> nullopt.
+    CHECK(!aes128_cbc_decrypt_b64(enc, "8765432100000000").has_value());
+    // Not base64 at all.
+    CHECK(!aes128_cbc_decrypt_b64("not base64!!", key).has_value());
+    // Valid base64, but not a multiple of 16 bytes of ciphertext.
+    CHECK(!aes128_cbc_decrypt_b64("aGVsbG8=", key).has_value());
+    // Correct key but random bytes -> padding/JSON checks must reject.
+    CHECK(!aes128_cbc_decrypt_b64("AAAAAAAAAAAAAAAAAAAAAA==", key).has_value());
+    // Empty payload must not be treated as JSON.
+    CHECK(!aes128_cbc_decrypt_b64(aes128_cbc_encrypt_b64("", key), key).has_value());
+}
+
 } // namespace
 
 int main()
@@ -180,7 +217,7 @@ int main()
         {"url_parsing", test_url_parsing}, {"camera_auth_packet", test_camera_auth_packet},
         {"jpeg_size", test_jpeg_size},     {"ssdp", test_ssdp},
         {"models", test_models},           {"project_file", test_project_file},
-        {"ftp_escape", test_ftp_escape},
+        {"ftp_escape", test_ftp_escape},   {"hybrid_cipher", test_hybrid_cipher},
     };
     for (const auto& [name, fn] : tests) {
         const int before = g_failures;

@@ -102,6 +102,31 @@ working Home Assistant `ha-bambulab` install:
 | X1 and newer camera | standard RTSPS on 322 (`rtsps://bblp:<code>@<ip>:322/streaming/live/1`, what ha-bambulab and go2rtc use): DESCRIBE/SETUP/PLAY, H.264 in RTP (RFC 6184) interleaved on the TCP connection. The slicer passes it as `bambu:///rtsps___bblp:<code>@<ip>/streaming/live/1?proto=rtsps&…` when the printer reports an `rtsps` `ipcam.rtsp_url` |
 | Identity | the printer's TLS certificate CN is its serial. `bind_detect` reads it and maps the serial prefix to a model with Studio's own `resources/printers/*.json` (`sn_prefix`) |
 
+### MQTT cipher modes
+
+Bambu uses two wire formats on the same MQTT topics:
+
+- **LAN-only mode** (Developer Mode on recent firmware): payloads are plain JSON.
+- **Hybrid mode** (older firmware kept in LAN + cloud mode, no Developer Mode):
+  payloads on `request`/`report` are AES-128-CBC + PKCS7, base64-encoded, with
+  key **and** IV = the LAN access code as ASCII, right-padded with `0` to 16
+  characters (an 8-digit code). The TLS connection, `bblp` auth and topics are
+  identical, so the plugin can probe both.
+
+`MqttClient` has `CipherMode { plain, aes, auto }`. In `auto` (the default) every
+publish is sent in both forms when an access code is known — the printer only
+parses the one it expects and ignores the other (verified against the
+`--hybrid` mode of `tests/fake_printer.py`; **not yet verified against a real
+hybrid printer**). The first inbound payload that decodes settles the mode:
+payload starting with `{`/`[` → plain, a valid base64/AES/PKCS7/JSON decode →
+aes; anything else is dropped. Force a mode with
+`BBL_LAN_MQTT_CIPHER=plain|aes|auto`; `BBL_LAN_DEBUG=1` logs the settled mode.
+
+The derivation is documented by community projects (bambu_mqtt_control) and is
+the same scheme the cloud protocol uses with per-device keys. It implements no
+extracted secret: the key material is the user's own access code, which the
+slicer already requires.
+
 ## 4. Implementation
 
 Small C++17 libraries with only OpenSSL and libcurl as dependencies, both
@@ -111,7 +136,9 @@ present in the flatpak runtime:
   connect and reads; any thread may write or `cancel()`. Every wait is sliced at
   100 ms so cancellation is fast.
 - `src/networking/mqtt_client.*`: minimal MQTT 3.1.1 client: CONNECT/CONNACK, SUBSCRIBE,
-  QoS0/1 PUBLISH, PUBACK, keepalive ping.
+  QoS0/1 PUBLISH, PUBACK, keepalive ping. With a cipher key set it can send
+  each publish plain, AES-encrypted or both (`auto`), and settles the mode on
+  the first decodable inbound payload — see [MQTT cipher modes](#mqtt-cipher-modes).
 - `src/networking/agent.*`: the `void* agent` handle. One thread per printer owns its MQTT
   session; callbacks are invoked without holding locks; disconnects never
   block the GUI thread for more than ~100 ms.

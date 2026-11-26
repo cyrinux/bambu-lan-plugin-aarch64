@@ -72,5 +72,31 @@ check camera_rtsp     "stream: sub_type=0 320x180 @15fps" "$(probe "$CODE" camer
 check camera_rtsp_key "sample 1: [0-9]* bytes sync"        "$(probe "$CODE" camera_rtsp 127.0.0.1:8322 "$WORK/frame.h264" || true)"
 check camera_rtsp_bad "access code refused"                "$(probe wrong camera_rtsp 127.0.0.1:8322 "$WORK/frame.h264" || true)"
 
+# Hybrid mode (printer NOT in LAN-only mode): the fake ignores plaintext and
+# answers encrypted; the plugin must detect it (auto), encrypt and still get
+# its reports. Serial 094... = H2D family (ftp:// print URL).
+echo "=== hybrid section starting ==="
+HWORK="$(mktemp -d "${TMPDIR:-/tmp}/bbl-lan-it-hy.XXXXXX")"
+trap 'kill "${FAKE_PID:-0}" "${HFAKE_PID:-0}" 2>/dev/null || true; rm -rf "$WORK" "$HWORK"' EXIT
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=$SERIAL" \
+  -keyout "$HWORK/key.pem" -out "$HWORK/cert.pem" 2>/dev/null
+python3 -I "$ROOT/tests/fake_printer.py" --cert "$HWORK/cert.pem" --key "$HWORK/key.pem" \
+  --code "$CODE" --serial "$SERIAL" --h264 "$ROOT/tests/fixtures/camera_320x180.h264" --rtsp-port 8323 \
+  --hybrid --mqtt-port 18883 --camera-port 16000 >"$HWORK/fake.log" 2>&1 &
+HFAKE_PID=$!
+sleep 1
+hprobe() { (cd "$HWORK" && BBL_ACCESS_CODE="$1" "${@:2}"); }
+if [[ ${BBL_TEST_RUNNER:-flatpak} == native ]]; then
+  hprobe() { (cd "$HWORK" && BBL_ACCESS_CODE="$1" "$WORK/probe" "$ROOT/dist" "${@:2}"); }
+else
+  hprobe() {
+    flatpak run --share=network --filesystem="$ROOT" --filesystem="$HWORK" --command=sh "$BBL_TEST_APP" -c \
+      "cd '$HWORK' && BBL_ACCESS_CODE='$1' '$PROBE' '$ROOT/dist' ${*:2}"
+  }
+fi
+check hybrid_connect "received 1 report" "$(hprobe "$CODE" connect 127.0.0.1:18883 "$SERIAL" || true)"
+check hybrid_sdprint "start_sdcard_print rc=0" "$(hprobe "$CODE" sdprint 127.0.0.1:18883 "$SERIAL" benchy.gcode.3mf || true)"
+echo "--- hybrid fake printer log"; cat "$HWORK/fake.log"
+
 echo "--- fake printer log"; cat "$WORK/fake.log"
 exit $fail

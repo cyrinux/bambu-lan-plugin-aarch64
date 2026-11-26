@@ -42,6 +42,10 @@ The slicer picks the camera protocol from the printer's own report
 
 Whatever the model, the printer must be in **LAN-only mode with Developer Mode**
 enabled on recent firmware, because this plugin cannot sign commands.
+Older firmware that lacks Developer Mode can stay in **hybrid mode** (LAN +
+cloud): the plugin then talks to the printer with the same AES-encrypted MQTT
+payloads the cloud uses, keyed with your LAN access code. See
+[MQTT cipher modes](docs/how-it-works.md#mqtt-cipher-modes).
 
 ## What works
 
@@ -49,7 +53,7 @@ enabled on recent firmware, because this plugin cannot sign commands.
 |---|---|
 | Discovery | SSDP NOTIFY listener on UDP 2021/1990 + periodic M-SEARCH |
 | Add printer by IP | `bind_detect`: reads the serial from the printer's TLS certificate CN, model from the serial prefix |
-| Status / control (Device tab) | MQTT 3.1.1 over TLS 8883 (`bblp` + access code), `device/<sn>/report` / `request` |
+| Status / control (Device tab) | MQTT 3.1.1 over TLS 8883 (`bblp` + access code), `device/<sn>/report` / `request`; plaintext in LAN-only mode, AES-128-CBC (access-code key) in hybrid mode — auto-detected |
 | Wrong access code | reported as CONNACK "5" → Studio's "Incorrect password" prompt |
 | Print (LAN) | FTPS upload (libcurl, implicit TLS 990) + MQTT `project_file`, waits for the printer's ack |
 | Send to printer storage | FTPS upload |
@@ -67,6 +71,9 @@ enabled on recent firmware, because this plugin cannot sign commands.
 - The `ft_*` file-transfer tunnel (eMMC printers, brtc). Studio falls back to FTPS.
 - Message signing. Recent firmware requires **LAN-only mode + Developer Mode** on the printer
   for unsigned third-party control (Settings → LAN Only Mode → Developer Mode on the printer screen).
+  Older models without Developer Mode can stay in hybrid (LAN + cloud) mode, where the
+  plugin uses the access-code-derived AES payloads instead — but signed commands are still
+  never produced.
 
 ## Install from a release
 
@@ -152,6 +159,9 @@ including MQTT traffic.
   Close Orca and re-run `install.sh --orca`.
 - **"Incorrect password"**: the access code changed on the printer, or LAN-only mode is off.
 - **Connects, but commands are ignored**: enable Developer Mode on the printer (unsigned control).
+  If the model has no Developer Mode, leave it in hybrid (LAN + cloud) mode instead — the
+  plugin encrypts automatically. Force the wire format with `BBL_LAN_MQTT_CIPHER=plain|aes`
+  (default `auto`) if a printer misbehaves; `BBL_LAN_DEBUG=1` logs which mode was settled on.
 - **Printer not discovered**: SSDP broadcasts don't cross VLANs/VPNs; add it by IP.
 - **X1/H2 camera stays black**: enable LAN live view on the printer ("LAN Only Liveview"),
   and for OrcaSlicer make sure GStreamer has an H.264 decoder (`openh264dec` or `avdec_h264`).
