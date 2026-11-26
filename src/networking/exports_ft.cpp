@@ -2,6 +2,15 @@
 // slicer calls most of these without null checks, so they must exist. This
 // LAN plugin has no tunnel implementation: creation fails with FT_EIO, which
 // makes the slicer fall back to FTPS (start_send_gcode_to_sdcard) paths.
+//
+// Why not implement it: the tunnel is the closed brtc protocol carried on the
+// printer's port-6000 control channel; no open specification exists, so an
+// implementation could only come from reverse-engineering Bambu's proprietary
+// binary — barred by CONTRIBUTING.md. The fallback is proven safe here and in
+// production: Studio treats any non-zero ft_tunnel_sync_connect as "no eMMC
+// tunnel" (docs/slicer-contract.md, PrintJobs section) and prints over FTPS,
+// which this plugin implements fully — including on eMMC models (H2D/X2D/…).
+// tests/integration.sh (ft_stubs) pins the exact return contract.
 #include "abi_check.hpp"
 
 #include <cstdint>
