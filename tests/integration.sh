@@ -98,5 +98,53 @@ check hybrid_connect "received 1 report" "$(hprobe "$CODE" connect 127.0.0.1:188
 check hybrid_sdprint "start_sdcard_print rc=0" "$(hprobe "$CODE" sdprint 127.0.0.1:18883 "$SERIAL" benchy.gcode.3mf || true)"
 echo "--- hybrid fake printer log"; cat "$HWORK/fake.log"
 
+# ft_* stubs must exist and fail cleanly (FT_EIO = -3): the slicer resolves
+# them without null checks and falls back to FTPS when creation/connect fails.
+# Preloading the runtime's OpenSSL makes the plugin loadable on hosts whose
+# library search path does not expose libssl.so.3 (NixOS).
+FT_SO="$ROOT/dist/libbambu_networking.so"
+[[ $TARGET == orca ]] && FT_SO="$ROOT/dist/libbambu_networking_orca.so"
+FT_PRELOAD=()
+if [[ ${BBL_TEST_RUNNER:-flatpak} != native ]]; then
+  # The plugin links OpenSSL/libcurl by soname; hosts whose search paths do not
+  # expose them (NixOS) still load it when preloaded from the runtime's lib
+  # paths or the store (globs need no ldconfig cache).
+  for lib in libssl.so.3 libcrypto.so.3 libcurl.so.4 libstdc++.so.6 libgcc_s.so.1; do
+    for c in "/run/current-system/sw/lib/$lib" /usr/lib*/"$lib" /lib*/"$lib" /nix/store/*/"lib/$lib"; do
+      # explicit if: a bare `[[ -e $c ]] && ...` would trip set -e when the
+      # last candidate does not exist.
+      if [[ -e $c ]]; then FT_PRELOAD+=("$c"); break; fi
+    done
+  done
+  [[ ${#FT_PRELOAD[@]} -gt 0 ]] && FT_PRELOAD=(LD_PRELOAD="$(IFS=:; echo "${FT_PRELOAD[*]}")")
+fi
+FT_OUT=
+if env "${FT_PRELOAD[@]+"${FT_PRELOAD[@]}"}" python3 -I - "$FT_SO" <<'PYEOF'
+import ctypes, sys
+lib = ctypes.CDLL(sys.argv[1])
+lib.ft_tunnel_create.restype = ctypes.c_int
+lib.ft_tunnel_create.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+lib.ft_tunnel_start_connect.restype = ctypes.c_int
+lib.ft_tunnel_start_connect.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+lib.ft_tunnel_shutdown.restype = ctypes.c_int
+lib.ft_tunnel_shutdown.argtypes = [ctypes.c_void_p]
+lib.ft_job_create.restype = ctypes.c_int
+lib.ft_job_create.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+lib.ft_job_cancel.restype = ctypes.c_int
+lib.ft_job_cancel.argtypes = [ctypes.c_void_p]
+h = ctypes.c_void_p()
+assert lib.ft_tunnel_create(b"bambu:///local/127.0.0.1", ctypes.byref(h)) == -3, "tunnel_create != FT_EIO"
+assert h.value in (None, 0), "tunnel_create must null the handle on failure"
+assert lib.ft_tunnel_start_connect(None, None, None) == -3, "start_connect != FT_EIO"
+assert lib.ft_tunnel_shutdown(None) == 0, "shutdown must be idempotent OK"
+j = ctypes.c_void_p()
+assert lib.ft_job_create(b"{}", ctypes.byref(j)) == -3, "job_create != FT_EIO"
+assert j.value in (None, 0), "job_create must null the handle on failure"
+assert lib.ft_job_cancel(None) == 0, "job_cancel must be idempotent OK"
+print("ft_stubs ok")
+PYEOF
+then FT_OUT="ft_stubs ok"; else FT_OUT="ft_* stubs broken"; fi
+check ft_stubs "ft_stubs ok" "$FT_OUT"
+
 echo "--- fake printer log"; cat "$WORK/fake.log"
 exit $fail

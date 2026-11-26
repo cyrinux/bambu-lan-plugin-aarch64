@@ -127,6 +127,13 @@ the same scheme the cloud protocol uses with per-device keys. It implements no
 extracted secret: the key material is the user's own access code, which the
 slicer already requires.
 
+**Verification status.** Both the plaintext and encrypted paths are covered by
+the fake printer (`tests/integration.sh`, `--hybrid`) for both ABIs. The fake
+implements this document, so it proves the C++ and reference implementations
+agree, *not* that they match a real hybrid printer. Field-testing one is the
+open item; if a real printer never answers, run with
+`BBL_LAN_MQTT_CIPHER=aes BBL_LAN_DEBUG=1` and compare against the log.
+
 ## 4. Implementation
 
 Small C++17 libraries with only OpenSSL and libcurl as dependencies, both

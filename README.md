@@ -35,7 +35,7 @@ stream H.264 over RTSPS on port 322. The plugin handles both.
 | A1 | ✅ tested | ✅ tested | |
 | A1 mini, P1P, P1S | ✅ expected | ✅ expected | same port-6000 JPEG camera and `file:///sdcard/` print URL as the A1 |
 | X1, X1 Carbon, X1E | ✅ expected | ⚠️ untested | RTSPS camera (port 322, H.264), tested against a simulated printer only; enable "LAN Only Liveview" on the printer |
-| P2S, H2D, H2D Pro, H2S, H2C, X2D, A2L, H3C, N8 | ⚠️ untested | ⚠️ untested | `ftp:///` print URL; RTSPS camera when the printer reports one; may need the `ft_*` tunnel (eMMC) or signed commands on newer firmware |
+| P2S, H2D, H2D Pro, H2S, H2C, X2D, A2L, H3C, N8 | ⚠️ untested | ⚠️ untested | serial prefixes and model ids verified against Studio's own `resources/printers/*.json`; `ftp:///` print URL; RTSPS camera when the printer reports one; may need the `ft_*` tunnel (eMMC) or signed commands on newer firmware |
 
 The slicer picks the camera protocol from the printer's own report
 (`ipcam.rtsp_url`), so the plugin follows whatever the printer announces.
